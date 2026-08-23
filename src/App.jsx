@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { toPng } from 'html-to-image'
 import { jsPDF } from 'jspdf'
 
@@ -20,12 +20,22 @@ const ZONE_Y = 84
 
 const NOTE_COLORS = ['#fff9c4', '#c8e6c9', '#ffcdd2', '#bbdefb', '#ffffff']
 
+const isIosLike = () =>
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
 let idc = 1
 const uid = () => idc++
+
+const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
+const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
 
 export default function App() {
   const sheetRef = useRef(null)
   const fileRef = useRef(null)
+  const noteFileRef = useRef(null)
+  const workspaceRef = useRef(null)
+  const noteAttachId = useRef(null)
 
   // ヘッダー情報
   const [meta, setMeta] = useState({
@@ -50,6 +60,58 @@ export default function App() {
   // 表示ズーム
   const [zoom, setZoom] = useState(0.85)
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState(null)
+
+  const imgTRef = useRef(imgT)
+  imgTRef.current = imgT
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+
+  const fitToScreen = useCallback(() => {
+    const el = workspaceRef.current
+    if (!el) return
+    const pad = 20
+    const z = Math.min(
+      (el.clientWidth - pad * 2) / SHEET_W,
+      (el.clientHeight - pad * 2) / SHEET_H,
+      1.4,
+    )
+    setZoom(Math.max(0.2, Number(z.toFixed(3))))
+  }, [])
+
+  useEffect(() => {
+    const run = () => fitToScreen()
+    run()
+    const raf = requestAnimationFrame(() => requestAnimationFrame(run))
+    const t = setTimeout(run, 80)
+    let lastW = window.innerWidth
+    const onResize = () => {
+      // 幅が大きく変わったときだけ（向き変更）。キーボード表示の高さ変化では触らない
+      if (Math.abs(window.innerWidth - lastW) < 40) return
+      lastW = window.innerWidth
+      fitToScreen()
+    }
+    const onOrient = () => setTimeout(fitToScreen, 250)
+    window.addEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onOrient)
+    screen.orientation?.addEventListener?.('change', onOrient)
+
+    const preventGesture = (e) => e.preventDefault()
+    document.addEventListener('gesturestart', preventGesture, { passive: false })
+    document.addEventListener('gesturechange', preventGesture, { passive: false })
+    document.addEventListener('gestureend', preventGesture, { passive: false })
+
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(t)
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('orientationchange', onOrient)
+      screen.orientation?.removeEventListener?.('change', onOrient)
+      document.removeEventListener('gesturestart', preventGesture)
+      document.removeEventListener('gesturechange', preventGesture)
+      document.removeEventListener('gestureend', preventGesture)
+    }
+  }, [fitToScreen])
 
   // ---------- 画像 ----------
   const onPickImage = (e) => {
@@ -64,23 +126,81 @@ export default function App() {
     e.target.value = ''
   }
 
-  // 画像ゾーン内ドラッグでパン
+  const imgPtrs = useRef(new Map())
   const imgDragRef = useRef(null)
+  const pinchRef = useRef(null)
+  const lastTapRef = useRef(0)
+
   const onImgPointerDown = (e) => {
     if (!image) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
-    imgDragRef.current = { sx: e.clientX, sy: e.clientY, ox: imgT.x, oy: imgT.y }
+    imgPtrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const t = imgTRef.current
+    const pts = [...imgPtrs.current.values()]
+    if (pts.length >= 2) {
+      imgDragRef.current = null
+      const [a, b] = pts
+      pinchRef.current = {
+        dist: dist2(a, b),
+        mid: mid2(a, b),
+        scale: t.scale,
+        ox: t.x,
+        oy: t.y,
+      }
+      return
+    }
+    imgDragRef.current = {
+      sx: e.clientX,
+      sy: e.clientY,
+      ox: t.x,
+      oy: t.y,
+      moved: false,
+    }
   }
   const onImgPointerMove = (e) => {
+    if (!imgPtrs.current.has(e.pointerId)) return
+    imgPtrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const pts = [...imgPtrs.current.values()]
+    if (pinchRef.current && pts.length >= 2) {
+      const [a, b] = pts
+      const d = pinchRef.current
+      const scale = Math.min(6, Math.max(0.2, d.scale * (dist2(a, b) / (d.dist || 1))))
+      const mid = mid2(a, b)
+      const z = zoomRef.current
+      const dx = (mid.x - d.mid.x) / z
+      const dy = (mid.y - d.mid.y) / z
+      setImgT({ x: d.ox + dx, y: d.oy + dy, scale })
+      return
+    }
     if (!imgDragRef.current) return
     const d = imgDragRef.current
-    const dx = (e.clientX - d.sx) / zoom
-    const dy = (e.clientY - d.sy) / zoom
+    const dx = (e.clientX - d.sx) / zoomRef.current
+    const dy = (e.clientY - d.sy) / zoomRef.current
+    if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true
     setImgT((t) => ({ ...t, x: d.ox + dx, y: d.oy + dy }))
   }
   const onImgPointerUp = (e) => {
-    imgDragRef.current = null
+    imgPtrs.current.delete(e.pointerId)
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
+    if (imgPtrs.current.size < 2) pinchRef.current = null
+    if (imgPtrs.current.size === 1) {
+      const [p] = imgPtrs.current.values()
+      const t = imgTRef.current
+      imgDragRef.current = { sx: p.x, sy: p.y, ox: t.x, oy: t.y, moved: true }
+    } else if (imgPtrs.current.size === 0) {
+      const d = imgDragRef.current
+      if (d && !d.moved) {
+        const now = Date.now()
+        if (now - lastTapRef.current < 350) {
+          setImgT({ x: 0, y: 0, scale: 1 })
+          lastTapRef.current = 0
+        } else {
+          lastTapRef.current = now
+        }
+      }
+      imgDragRef.current = null
+    }
   }
   const onImgWheel = (e) => {
     if (!image) return
@@ -108,6 +228,20 @@ export default function App() {
   const removeNote = (id) => {
     setNotes((s) => s.filter((n) => n.id !== id))
     if (selected === id) setSelected(null)
+  }
+
+  const onNotePickImage = (e) => {
+    const f = e.target.files?.[0]
+    const id = noteAttachId.current
+    e.target.value = ''
+    if (!f || id == null) return
+    const reader = new FileReader()
+    reader.onload = () => updateNote(id, { img: reader.result })
+    reader.readAsDataURL(f)
+  }
+  const attachNoteImage = (id) => {
+    noteAttachId.current = id
+    noteFileRef.current?.click()
   }
 
   // 付箋への画像ドラッグ＆ドロップ（参考資料の添付）
@@ -144,8 +278,8 @@ export default function App() {
   const onNotePointerMove = (e) => {
     const d = noteDrag.current
     if (!d) return
-    const dx = (e.clientX - d.sx) / zoom
-    const dy = (e.clientY - d.sy) / zoom
+    const dx = (e.clientX - d.sx) / zoomRef.current
+    const dy = (e.clientY - d.sy) / zoomRef.current
     updateNote(d.id, { x: d.ox + dx, y: d.oy + dy })
   }
   const onNotePointerUp = (e) => {
@@ -163,8 +297,8 @@ export default function App() {
   const onResizeMove = (e) => {
     const d = resizeDrag.current
     if (!d) return
-    const dx = (e.clientX - d.sx) / zoom
-    const dy = (e.clientY - d.sy) / zoom
+    const dx = (e.clientX - d.sx) / zoomRef.current
+    const dy = (e.clientY - d.sy) / zoomRef.current
     updateNote(d.id, {
       w: Math.max(120, d.ow + dx),
       h: Math.max(70, d.oh + dy),
@@ -187,16 +321,64 @@ export default function App() {
     })
   }, [])
 
+  const exportBlob = async (blob, filename) => {
+    const file = new File([blob], filename, { type: blob.type })
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: filename })
+        return
+      } catch (err) {
+        if (err.name === 'AbortError') return
+      }
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    if (isIosLike()) {
+      // iPad Safari は download を無視し、非同期後の window.open もブロックされやすい
+      setPending((prev) => {
+        if (prev?.url) URL.revokeObjectURL(prev.url)
+        return { blob, filename, url }
+      })
+      return
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 20000)
+  }
+
+  const sharePending = async () => {
+    if (!pending) return
+    const file = new File([pending.blob], pending.filename, { type: pending.blob.type })
+    try {
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: pending.filename })
+        URL.revokeObjectURL(pending.url)
+        setPending(null)
+        return
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') return
+    }
+    window.open(pending.url, '_blank')
+  }
+
+  const dismissPending = () => {
+    if (pending?.url) URL.revokeObjectURL(pending.url)
+    setPending(null)
+  }
+
   const savePng = async () => {
     try {
       setBusy(true)
       setSelected(null)
       await new Promise((r) => setTimeout(r, 60))
-      const url = await capture()
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${buildName(meta)}.png`
-      a.click()
+      const dataUrl = await capture()
+      const blob = await (await fetch(dataUrl)).blob()
+      await exportBlob(blob, `${buildName(meta)}.png`)
     } catch (err) {
       alert('PNG保存に失敗しました: ' + err)
     } finally {
@@ -213,14 +395,14 @@ export default function App() {
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
       const pw = pdf.internal.pageSize.getWidth()
       const ph = pdf.internal.pageSize.getHeight()
-      // 印刷セーフ余白を除いた領域に、比率を維持して全体を収める
       const availW = pw - PDF_MARGIN * 2
       const availH = ph - PDF_MARGIN * 2
       const ratio = Math.min(availW / SHEET_W, availH / SHEET_H)
       const w = SHEET_W * ratio
       const h = SHEET_H * ratio
       pdf.addImage(url, 'PNG', (pw - w) / 2, (ph - h) / 2, w, h, undefined, 'FAST')
-      pdf.save(`${buildName(meta)}.pdf`)
+      const blob = pdf.output('blob')
+      await exportBlob(blob, `${buildName(meta)}.pdf`)
     } catch (err) {
       alert('PDF保存に失敗しました: ' + err)
     } finally {
@@ -244,35 +426,40 @@ export default function App() {
       <header className="toolbar">
         <div className="brand">🎬 レイアウト / 作画指示用紙</div>
         <div className="tb-group">
-          <button onClick={() => fileRef.current?.click()}>🖼 画像を選択</button>
-          <button onClick={addNote}>💬 コメント追加</button>
+          <button type="button" onClick={() => fileRef.current?.click()}>🖼 画像を選択</button>
+          <button type="button" onClick={addNote}>💬 コメント追加</button>
         </div>
         <div className="tb-group">
           <label className="zoom">
             表示
             <input
-              type="range" min="0.4" max="1.4" step="0.05"
+              type="range" min="0.2" max="1.4" step="0.05"
               value={zoom} onChange={(e) => setZoom(Number(e.target.value))}
             />
             {Math.round(zoom * 100)}%
           </label>
+          <button type="button" className="ghost" onClick={fitToScreen}>画面に合わせる</button>
         </div>
         <div className="tb-group right">
-          <button className="ghost" onClick={clearAll}>🗑 全消去</button>
-          <button className="primary" disabled={busy} onClick={savePng}>⬇ PNG保存</button>
-          <button className="primary" disabled={busy} onClick={savePdf}>⬇ PDF保存</button>
+          <button type="button" className="ghost" onClick={clearAll}>🗑 全消去</button>
+          <button type="button" className="primary" disabled={busy} onClick={savePng}>⬇ PNG保存</button>
+          <button type="button" className="primary" disabled={busy} onClick={savePdf}>⬇ PDF保存</button>
         </div>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickImage} />
+        <input ref={noteFileRef} type="file" accept="image/*" hidden onChange={onNotePickImage} />
       </header>
 
       {/* ===== ワークスペース ===== */}
-      <div className="workspace">
-        <div className="sheet-scaler" style={{ transform: `scale(${zoom})` }}>
+      <div className="workspace" ref={workspaceRef}>
+        <div
+          className="sheet-scaler"
+          style={{ width: SHEET_W * zoom, height: SHEET_H * zoom }}
+        >
           {/* ---- キャプチャ対象の用紙 ---- */}
           <div
             className="sheet"
             ref={sheetRef}
-            style={{ width: SHEET_W, height: SHEET_H }}
+            style={{ width: SHEET_W, height: SHEET_H, transform: `scale(${zoom})` }}
             onPointerDown={() => setSelected(null)}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => e.preventDefault()}
@@ -292,6 +479,7 @@ export default function App() {
               onPointerDown={(e) => { e.stopPropagation(); onImgPointerDown(e) }}
               onPointerMove={onImgPointerMove}
               onPointerUp={onImgPointerUp}
+              onPointerCancel={onImgPointerUp}
               onWheel={onImgWheel}
             >
               {image ? (
@@ -308,7 +496,7 @@ export default function App() {
                 <div className="zone-placeholder" onClick={() => fileRef.current?.click()}>
                   <div className="zone-plus">＋</div>
                   <div>16:9 の画像をここに貼り込み</div>
-                  <div className="hint">クリックして選択 / ドラッグで移動 / ホイールで拡大縮小</div>
+                  <div className="hint">タップ／クリックで選択 · ドラッグで移動 · ピンチまたはホイールで拡大</div>
                 </div>
               )}
               <div className="zone-ratio">16:9</div>
@@ -327,11 +515,13 @@ export default function App() {
                 onPointerDown={(e) => onNotePointerDown(e, n)}
                 onPointerMove={onNotePointerMove}
                 onPointerUp={onNotePointerUp}
+                onPointerCancel={onNotePointerUp}
                 onDragOver={(e) => onNoteDragOver(e, n.id)}
                 onDragLeave={(e) => onNoteDragLeave(e, n.id)}
                 onDrop={(e) => onNoteDrop(e, n.id)}
               >
                 <div className="note-bar">
+                  <div className="note-grip" aria-hidden>⋮⋮</div>
                   <div className="note-colors">
                     {NOTE_COLORS.map((c) => (
                       <span
@@ -344,6 +534,14 @@ export default function App() {
                     ))}
                   </div>
                   <button
+                    type="button"
+                    className="note-attach note-btn"
+                    title="画像を添付"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => attachNoteImage(n.id)}
+                  >📎</button>
+                  <button
+                    type="button"
                     className="note-x note-btn"
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => removeNote(n.id)}
@@ -353,6 +551,7 @@ export default function App() {
                   <div className="note-img-wrap">
                     <img className="note-img" src={n.img} alt="参考資料" draggable={false} />
                     <button
+                      type="button"
                       className="note-img-x note-btn"
                       title="画像を削除"
                       onPointerDown={(e) => e.stopPropagation()}
@@ -375,6 +574,7 @@ export default function App() {
                   onPointerDown={(e) => onResizeDown(e, n)}
                   onPointerMove={onResizeMove}
                   onPointerUp={onResizeUp}
+                  onPointerCancel={onResizeUp}
                 />
               </div>
             ))}
@@ -385,12 +585,12 @@ export default function App() {
               <div className="footage-row">
                 <span className="fl">尺</span>
                 <input
-                  className="fi" value={footage.sec}
+                  className="fi" value={footage.sec} inputMode="decimal"
                   onChange={(e) => setFootage({ ...footage, sec: e.target.value })}
                 />
                 <span className="fu">秒 +</span>
                 <input
-                  className="fi" value={footage.frame}
+                  className="fi" value={footage.frame} inputMode="decimal"
                   onChange={(e) => setFootage({ ...footage, frame: e.target.value })}
                 />
                 <span className="fu">コマ</span>
@@ -398,7 +598,7 @@ export default function App() {
               <div className="footage-row">
                 <span className="fl">コマ数</span>
                 <input
-                  className="fi wide" value={footage.koma}
+                  className="fi wide" value={footage.koma} inputMode="decimal"
                   onChange={(e) => setFootage({ ...footage, koma: e.target.value })}
                 />
                 <span className="fu">コマ</span>
@@ -408,6 +608,14 @@ export default function App() {
         </div>
       </div>
 
+      {pending && (
+        <div className="share-bar">
+          <span>{pending.filename} の保存準備ができました</span>
+          <button type="button" className="primary" onClick={sharePending}>共有</button>
+          <button type="button" onClick={() => window.open(pending.url, '_blank')}>開く</button>
+          <button type="button" className="ghost" onClick={dismissPending}>閉じる</button>
+        </div>
+      )}
       {busy && <div className="overlay">保存中…</div>}
     </div>
   )
@@ -417,7 +625,12 @@ function Field({ label, value, onChange, w }) {
   return (
     <label className="hfield" style={{ width: w }}>
       <span>{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} />
+      <input
+        value={value}
+        enterKeyHint="done"
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value)}
+      />
     </label>
   )
 }
