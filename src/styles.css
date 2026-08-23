@@ -1,0 +1,240 @@
+* { box-sizing: border-box; }
+
+:root {
+  --bar: #1f2733;
+  --bar2: #2b3543;
+  --accent: #3b82f6;
+  --ink: #1a1a1a;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  font-family: "Segoe UI", "Yu Gothic UI", "Hiragino Sans", Meiryo, sans-serif;
+  background: #6b7280;
+  color: #e5e7eb;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* ---------- ツールバー ---------- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--bar);
+  border-bottom: 1px solid #000;
+  flex-wrap: wrap;
+  z-index: 10;
+}
+.brand { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
+.tb-group { display: flex; align-items: center; gap: 8px; }
+.tb-group.right { margin-left: auto; }
+
+.toolbar button {
+  border: 1px solid #445;
+  background: var(--bar2);
+  color: #e5e7eb;
+  padding: 7px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.toolbar button:hover { background: #3a475a; }
+.toolbar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.toolbar button.primary:hover { background: #2f6fe0; }
+.toolbar button.primary:disabled { opacity: .5; cursor: default; }
+.toolbar button.ghost { background: transparent; }
+
+.zoom { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1; }
+.zoom input { accent-color: var(--accent); }
+
+/* ---------- ワークスペース ---------- */
+.workspace {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px;
+}
+.sheet-scaler { transform-origin: top center; }
+
+/* ---------- 用紙（キャプチャ対象） ---------- */
+.sheet {
+  position: relative;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+  overflow: hidden;
+}
+
+/* ヘッダー欄 */
+.sheet-head {
+  position: absolute;
+  top: 22px;
+  left: 40px;
+  right: 40px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+}
+.hfield { display: flex; flex-direction: column; gap: 3px; }
+.hfield span { font-size: 11px; color: #555; padding-left: 2px; }
+.hfield input {
+  border: none;
+  border-bottom: 1.5px solid #333;
+  font-size: 15px;
+  padding: 2px 4px;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  width: 100%;
+}
+.hfield input:focus { border-bottom-color: var(--accent); }
+
+/* 16:9 画像ゾーン */
+.image-zone {
+  position: absolute;
+  border: 2px solid #222;
+  background:
+    linear-gradient(45deg, #f3f4f6 25%, transparent 25%, transparent 75%, #f3f4f6 75%) 0 0/20px 20px,
+    linear-gradient(45deg, #f3f4f6 25%, #fff 25%, #fff 75%, #f3f4f6 75%) 10px 10px/20px 20px;
+  overflow: hidden;
+  cursor: grab;
+}
+.image-zone:active { cursor: grabbing; }
+/* 画像は object-fit:contain を基準に translate/scale で操作 */
+.zone-img {
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  user-select: none;
+  pointer-events: none;
+}
+.zone-placeholder {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px; color: #777; cursor: pointer;
+  text-align: center;
+}
+.zone-plus { font-size: 42px; line-height: 1; color: #9aa0a6; }
+.zone-placeholder .hint { font-size: 11px; color: #aaa; }
+.zone-ratio {
+  position: absolute; right: 6px; bottom: 4px;
+  font-size: 11px; color: #666; background: rgba(255,255,255,.7);
+  padding: 1px 6px; border-radius: 4px; pointer-events: none;
+}
+
+/* ---------- コメント付箋 ---------- */
+.note {
+  position: absolute;
+  border: 1px solid rgba(0,0,0,.35);
+  box-shadow: 0 3px 10px rgba(0,0,0,.25);
+  display: flex; flex-direction: column;
+  border-radius: 3px;
+  touch-action: none;
+  cursor: move;
+}
+.note.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.note.dragover { outline: 2px dashed var(--accent); outline-offset: 1px; }
+
+/* 付箋に添付した参考画像 */
+.note-img-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  max-height: 58%;
+  margin: 4px 6px 0;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+.note-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, .18);
+  background: #fff;
+}
+.note-img-x {
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 18px; height: 18px;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, .55); color: #fff;
+  font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.note-img-x:hover { background: rgba(200, 0, 0, .8); }
+.note-drop-hint {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(59, 130, 246, .12);
+  color: #1d4ed8; font-size: 12px; font-weight: 600;
+  pointer-events: none; border-radius: 3px;
+}
+.note-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 5px;
+  border-bottom: 1px solid rgba(0,0,0,.12);
+}
+.note-colors { display: flex; gap: 4px; }
+.swatch {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,.3); cursor: pointer; display: inline-block;
+}
+.note-x {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 16px; line-height: 1; color: #666; padding: 0 2px;
+}
+.note-x:hover { color: #c00; }
+.note-body {
+  flex: 1;
+  border: none; background: transparent; resize: none;
+  padding: 6px 8px; font-size: 13px; color: #222; outline: none;
+  font-family: inherit; line-height: 1.4;
+}
+.note-resize {
+  position: absolute; right: 0; bottom: 0;
+  width: 16px; height: 16px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,.3) 50%);
+}
+
+/* ---------- 右下：尺・コマ数 ---------- */
+.footage-box {
+  position: absolute;
+  right: 32px; bottom: 26px;
+  width: 218px;
+  border: 1.5px solid #222;
+  border-radius: 4px;
+  background: #fff;
+  padding: 5px 8px 6px;
+}
+.footage-title {
+  font-size: 10px; font-weight: 700; color: #333;
+  border-bottom: 1px solid #ddd; padding-bottom: 2px; margin-bottom: 3px;
+}
+.footage-row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
+.fl { font-size: 11px; font-weight: 600; color: #333; width: 34px; }
+.fu { font-size: 10px; color: #555; }
+.fi {
+  border: none; border-bottom: 1.2px solid #333;
+  width: 40px; text-align: center; font-size: 13px;
+  outline: none; background: transparent; color: var(--ink);
+}
+.fi.wide { width: 84px; }
+.fi:focus { border-bottom-color: var(--accent); }
+
+/* ---------- 保存中オーバーレイ ---------- */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 18px; z-index: 100;
+}
