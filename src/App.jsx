@@ -323,7 +323,8 @@ export default function App() {
 
   const exportBlob = async (blob, filename) => {
     const file = new File([blob], filename, { type: blob.type })
-    if (navigator.canShare?.({ files: [file] })) {
+    // Windows の Chrome/Edge も share に対応しているため、共有シートは iOS 系だけに限定する
+    if (isIosLike() && navigator.canShare?.({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: filename })
         return
